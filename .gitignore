@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# 每次求职调研产生的数据不进仓库（含个人投递状态）
+jobs.json
+report.html
+*.xlsx
+interview_prep.md
+status.json
