@@ -126,6 +126,46 @@ def validate(data: Any) -> Tuple[List[Issue], List[Issue]]:
     if not jobs:
         warnings.append(Issue("warning", "jobs", "jobs 为空，看板不会有内容。"))
 
+    # 公司覆盖度：防止“只挑几个代表岗”造成的静默截断
+    coverage = (meta or {}).get("公司覆盖") if isinstance(meta, dict) else None
+    counted: Dict[str, int] = {}
+    for job in jobs:
+        if isinstance(job, dict) and str(job.get("公司") or "").strip():
+            name = str(job["公司"]).strip()
+            counted[name] = counted.get(name, 0) + 1
+    if coverage is None:
+        if counted:
+            warnings.append(Issue("warning", "meta.公司覆盖",
+                "没有 meta.公司覆盖 记录，无法判断每家公司的岗位是否收全（不写覆盖记录默认视为没查全）。"))
+    elif not isinstance(coverage, dict):
+        errors.append(Issue("error", "meta.公司覆盖", "meta.公司覆盖 必须是 object。"))
+    else:
+        for name in sorted(counted):
+            if name not in coverage:
+                warnings.append(Issue("warning", f"meta.公司覆盖.{name}",
+                    f"{name}：有 {counted[name]} 条岗位记录，但没有覆盖记录（命中/收录/筛掉）。"))
+        for name, info in coverage.items():
+            where = f"meta.公司覆盖.{name}"
+            if not isinstance(info, dict):
+                errors.append(Issue("error", where, f"{name}：覆盖记录必须是 object。"))
+                continue
+            hit, took, dropped = info.get("命中"), info.get("收录"), info.get("筛掉") or 0
+            for key, value in (("命中", hit), ("收录", took), ("筛掉", dropped)):
+                if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                    errors.append(Issue("error", f"{where}.{key}", f"{name}：{key} 必须是非负整数。"))
+            if isinstance(hit, int) and isinstance(took, int) and isinstance(dropped, int):
+                gap = hit - dropped - took
+                if gap > 0:
+                    warnings.append(Issue("warning", where,
+                        f"{name}：命中 {hit} 个、筛掉 {dropped} 个，只收录了 {took} 个，还差 {gap} 个没入表。"))
+            actual = counted.get(name)
+            if isinstance(took, int) and actual is not None and took != actual:
+                warnings.append(Issue("warning", where,
+                    f"{name}：覆盖记录写收录 {took} 个，实际表里有 {actual} 条，对不上。"))
+            if not (info.get("检索词") or []):
+                warnings.append(Issue("warning", f"{where}.检索词",
+                    f"{name}：没记检索词，无法复核是否只用一个词搜了一遍。"))
+
     today = date.today()
     seen_ids: Dict[str, int] = {}
     for i, job in enumerate(jobs):
@@ -296,8 +336,15 @@ def write_xlsx(bundle: Dict[str, Any], issues: List[Issue], path: Path) -> None:
     meta = bundle["meta"]
     jobs = bundle["jobs"]
 
+    def _meta_cell(value: Any) -> Any:
+        if isinstance(value, list):
+            return "、".join(str(x) for x in value)
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+        return value
+
     sheet("说明", ["项", "值"],
-          [[k, ", ".join(v) if isinstance(v, list) else v] for k, v in meta.items()] +
+          [[k, _meta_cell(v)] for k, v in meta.items() if k != "公司覆盖"] +
           [["岗位数", len(jobs)], ["生成时间", datetime.now().strftime("%Y-%m-%d %H:%M")],
            ["提醒", "薪资/HC 以来源标注为准，网传数据未经官方确认；请以官方 JD 复核后再投递。"]],
           [18, 60])
@@ -323,14 +370,29 @@ def write_xlsx(bundle: Dict[str, Any], issues: List[Issue], path: Path) -> None:
         fit = j.get("匹配度")
         if isinstance(fit, (int, float)) and (row["最高匹配"] is None or fit > row["最高匹配"]):
             row["最高匹配"] = fit
+    cov = (meta or {}).get("公司覆盖") or {}
+    def _cov(name: str, key: str) -> Any:
+        info = cov.get(name)
+        return info.get(key) if isinstance(info, dict) else ""
+    def _gap(name: str) -> Any:
+        info = cov.get(name)
+        if not isinstance(info, dict):
+            return ""
+        hit, took, dropped = info.get("命中"), info.get("收录"), info.get("筛掉") or 0
+        if isinstance(hit, int) and isinstance(took, int) and isinstance(dropped, int):
+            return hit - dropped - took
+        return ""
     sheet(
         "公司汇总",
-        ["公司", "岗位数", "在招", "已投", "最高匹配度", "最早截止", "方向", "城市"],
+        ["公司", "岗位数", "在招", "已投", "最高匹配度", "最早截止",
+         "命中", "收录", "筛掉", "未入表", "检索词", "方向", "城市"],
         [[name, v["岗位数"], v["在招"], v["已投"], v["最高匹配"],
           v["最早截止"].isoformat() if v["最早截止"] else "",
+          _cov(name, "命中"), _cov(name, "收录"), _cov(name, "筛掉"), _gap(name),
+          "、".join(_cov(name, "检索词") or []) if isinstance(_cov(name, "检索词"), list) else "",
           "、".join(sorted(v["方向"])), "、".join(sorted(v["城市"]))]
          for name, v in sorted(companies.items(), key=lambda kv: (-(kv[1]["最高匹配"] or 0), kv[0]))],
-        [24, 8, 8, 8, 12, 12, 30, 16],
+        [24, 8, 8, 8, 12, 12, 8, 8, 8, 10, 26, 30, 16],
     )
 
     job_cols = ["id", "公司", "岗位", "团队", "方向标签", "城市", "hc状态", "薪资", "年包万",
@@ -446,6 +508,7 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
   </div>
   <div class="grid" id="grid"></div>
   <div class="empty" id="empty" style="display:none">没有符合条件的岗位。</div>
+  <div class="q" id="coverage"></div>
   <div class="q" id="quality"></div>
   <div class="note">
     <b>怎么用</b>：投递状态可以直接在卡片上改，保存在本浏览器；点「导出投递状态」拿到一段 JSON，
@@ -457,6 +520,7 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
 <script>
 const DATA = __DATA__;
 const ISSUES = __ISSUES__;
+const COVERAGE = __COVERAGE__;
 const KEY = "jobseek_status_" + (DATA.meta && DATA.meta.更新时间 ? DATA.meta.更新时间 : "v1");
 const STATES = __STATES__;
 const local = JSON.parse(localStorage.getItem(KEY) || "{}");
@@ -560,6 +624,32 @@ function renderKpis(){
   document.getElementById("kpis").innerHTML=k.map(([a,b])=>`<div class="kpi"><b>${a}</b><span>${b}</span></div>`).join("");
 }
 
+(function renderCoverage(){
+  const counted={}; jobs.forEach(j=>{counted[j.公司]=(counted[j.公司]||0)+1;});
+  const names=[...new Set(Object.keys(counted).concat(Object.keys(COVERAGE||{})))].sort();
+  if(!names.length){document.getElementById("coverage").style.display="none";return;}
+  const rows=names.map(n=>{
+    const c=(COVERAGE||{})[n]||{}; const hit=c.命中, took=c.收录, drop=c.筛掉||0;
+    const gap=(typeof hit==="number"&&typeof took==="number")?hit-drop-took:null;
+    const tag = gap===null ? '<span class="tag warn">无覆盖记录</span>'
+              : gap>0 ? `<span class="tag bad">还差 ${gap} 个没入表</span>`
+              : '<span class="tag ok">已收全</span>';
+    return `<tr><td>${esc(n)}</td><td style="text-align:right">${counted[n]||0}</td>
+      <td style="text-align:right">${hit==null?"—":hit}</td>
+      <td style="text-align:right">${drop||0}</td><td>${tag}</td>
+      <td style="color:#64748b;font-size:12px">${esc((c.检索词||[]).join("、"))}${c.说明?" · "+esc(c.说明):""}</td></tr>`;
+  }).join("");
+  const bad=names.filter(n=>{const c=(COVERAGE||{})[n]; if(!c)return true;
+    const g=(typeof c.命中==="number"&&typeof c.收录==="number")?c.命中-(c.筛掉||0)-c.收录:null; return g===null||g>0;}).length;
+  document.getElementById("coverage").innerHTML=
+    `<h2>公司覆盖度（${names.length} 家，${bad} 家有缺口或没记录）</h2>
+     <p style="font-size:12.5px;color:#64748b;margin:4px 0 10px">「命中」是该公司符合你方向的在招岗位总数，「表内」是实际入表条数。两者不一致说明岗位没收全，看板会低估这家公司的机会。</p>
+     <div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">
+     <thead><tr style="text-align:left;color:#64748b">
+       <th style="padding:4px 8px 4px 0">公司</th><th style="text-align:right">表内</th><th style="text-align:right">命中</th>
+       <th style="text-align:right">筛掉</th><th>状态</th><th>检索词 / 说明</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+})();
+
 document.getElementById("quality").innerHTML =
   `<h2>数据质量（${ISSUES.length} 条）</h2>` + (ISSUES.length
     ? `<ul>${ISSUES.map(i=>`<li><span class="lv-${i.level}">${i.level==="error"?"错误":"提示"}<\/span> · ${esc(i.where)} — ${esc(i.message)}<\/li>`).join("")}<\/ul>`
@@ -597,6 +687,7 @@ def write_html(bundle: Dict[str, Any], issues: List[Issue], path: Path) -> None:
             .replace("__GENTIME__", datetime.now().strftime("%Y-%m-%d %H:%M"))
             .replace("__STATES__", json.dumps(APPLY_STATES, ensure_ascii=False))
             .replace("__ISSUES__", json.dumps(issues, ensure_ascii=False))
+            .replace("__COVERAGE__", json.dumps((meta or {}).get("公司覆盖") or {}, ensure_ascii=False))
             .replace("__DATA__", json.dumps(bundle, ensure_ascii=False)))
     path.write_text(page, encoding="utf-8")
 
