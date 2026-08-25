@@ -511,7 +511,7 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
   <div class="q" id="coverage"></div>
   <div class="q" id="quality"></div>
   <div class="note">
-    <b>怎么用</b>：投递状态可以直接在卡片上改，保存在本浏览器；点「导出投递状态」拿到一段 JSON，
+    <b>怎么用</b>：投递状态可以直接在卡片上改，保存在本浏览器（同一个地址栏地址下才读得到，file:// 和 127.0.0.1 是两套）；点「导出投递状态」拿到一段 JSON，
     交给 Claude 或用 <code>build_report.py jobs.json --merge-status status.json</code> 合并回 jobs.json。<br>
     <b>可信度</b>：薪资、HC、截止时间以卡片上的来源标注为准；标「网传」的数据来自社区帖，未经官方确认。
     投递前请以官方 JD 复核。数据生成于 __GENTIME__。
@@ -521,9 +521,34 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
 const DATA = __DATA__;
 const ISSUES = __ISSUES__;
 const COVERAGE = __COVERAGE__;
-const KEY = "jobseek_status_" + (DATA.meta && DATA.meta.更新时间 ? DATA.meta.更新时间 : "v1");
+// 固定 key：早期版本把 meta.更新时间 拼进 key，导致每次刷新数据都换一个 key、
+// 用户已保存的投递状态“看起来被清空”。这里固定 key，并把所有历史 key 的内容合并回来。
+const KEY = "jobseek_status_v1";
 const STATES = __STATES__;
-const local = JSON.parse(localStorage.getItem(KEY) || "{}");
+const local = (function migrate(){
+  let cur = {};
+  try { cur = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch(e) { cur = {}; }
+  const legacy = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k !== KEY && /^jobseek_status_/.test(k)) legacy.push(k);
+  }
+  if (!legacy.length) return cur;
+  let merged = false;
+  legacy.sort();                        // 旧的在前，新的覆盖旧的
+  for (const k of legacy) {
+    let v = {};
+    try { v = JSON.parse(localStorage.getItem(k) || "{}"); } catch(e) { continue; }
+    for (const id in v) {
+      if (!cur[id] || cur[id] === "未投") { cur[id] = v[id]; merged = true; }
+    }
+  }
+  if (merged) {
+    localStorage.setItem(KEY, JSON.stringify(cur));
+    console.info("[求职看板] 已从 " + legacy.length + " 个历史存储 key 恢复投递状态");
+  }
+  return cur;
+})();
 const jobs = DATA.jobs.map(j => Object.assign({}, j, {投递状态: local[j.id] || j.投递状态 || "未投"}));
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
