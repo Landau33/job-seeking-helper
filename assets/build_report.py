@@ -232,7 +232,7 @@ def validate(data: Any) -> Tuple[List[Issue], List[Issue]]:
             if value and parse_date(value) is None:
                 warnings.append(Issue("warning", f"{where}.{key}", f"{label}：{key}「{value}」不是可识别日期（建议 YYYY-MM-DD）。"))
         deadline = parse_date(job.get("截止时间"))
-        if deadline and deadline < today and st in ("", "未投"):
+        if deadline and deadline < today and st in ("", "未投") and hc != "已关闭":
             warnings.append(Issue("warning", f"{where}.截止时间", f"{label}：截止时间已过（{deadline}）但还是未投状态。"))
 
         sources = job.get("来源") or []
