@@ -82,8 +82,16 @@ def parse_salary(text: Any) -> Optional[float]:
     m = re.search(r"(\d+(?:\.\d+)?)\s*(?:-\s*(\d+(?:\.\d+)?))?\s*k", s)
     if m:
         monthly = _mid(m.group(1), m.group(2))
-        months_match = re.search(r"\*\s*(\d+(?:\.\d+)?)", s)
-        months = float(months_match.group(1)) if months_match else 12.0
+        # 月数写法：×15 / *15 / ·15薪 / 15薪 / 13+2；都没有才按 12 个月
+        plus = re.search(r"(\d+)\s*\+\s*(\d+)\s*薪?", s[m.end():])
+        months_match = (re.search(r"[*·]\s*(\d+(?:\.\d+)?)", s[m.end():])
+                        or re.search(r"(\d+(?:\.\d+)?)\s*薪", s[m.end():]))
+        if plus:
+            months = float(plus.group(1)) + float(plus.group(2))
+        elif months_match:
+            months = float(months_match.group(1))
+        else:
+            months = 12.0
         return round(monthly * months / 10.0, 2)  # k*月 -> 万
     return None
 
@@ -215,7 +223,10 @@ def validate(data: Any) -> Tuple[List[Issue], List[Issue]]:
         if salary and salary != "未知":
             if not src or src == "未知":
                 warnings.append(Issue("warning", f"{where}.薪资来源", f"{label}：写了薪资却没写来源，看板会标为未核实。"))
-            if src == "官方JD" and conf and conf != "高":
+            # 招聘平台（BOSS/猎聘）上公司自己标的区间按规则记「官方JD + 中」，不报警
+            via_platform = any(isinstance(x, dict) and re.search(r"zhipin|liepin", str(x.get("链接") or ""))
+                               for x in (job.get("来源") or [])) or re.search(r"zhipin|liepin", str(job.get("jd链接") or ""))
+            if src == "官方JD" and conf and conf != "高" and not (via_platform and conf == "中"):
                 warnings.append(Issue("warning", f"{where}.薪资可信度", f"{label}：来源是官方 JD，可信度却不是「高」，确认一下。"))
             if src in {"网传", "推断"} and conf == "高":
                 errors.append(Issue("error", f"{where}.薪资可信度", f"{label}：网传/推断的薪资不能标「高」可信度。"))
@@ -490,6 +501,7 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
 .note{margin-top:20px;background:#0f172a;color:#cbd5e1;border-radius:var(--radius);padding:16px 18px;font-size:12.5px;line-height:1.8}
 .note b{color:#fff}
 .empty{padding:40px;text-align:center;color:var(--muted)}
+.card.nohc{opacity:.55}
 .card.co{cursor:pointer;transition:border-color .15s,box-shadow .15s}
 .card.co:hover{border-color:#c7d7ff;box-shadow:0 4px 14px rgba(31,94,255,.08)}
 .card.co .count{font-size:12.5px;color:#334155;margin:2px 0 8px}
@@ -610,7 +622,7 @@ function card(j){
   const src = (j.来源||[]).map(s=>s.链接?`<a href="${esc(s.链接)}" target="_blank" rel="noopener">${esc(s.标题)}<\/a>`:esc(s.标题)).join(" · ");
   const doubt = (j.存疑||[]).length?`<details><summary>存疑 ${j.存疑.length} 条</summary><ul>${j.存疑.map(d=>`<li>${esc(d)}<\/li>`).join("")}<\/ul><\/details>`:"";
   const req = (j.核心要求||[]).length?`<details><summary>岗位要求 / 面试流程</summary><ul>${(j.核心要求||[]).map(r=>`<li>${esc(r)}<\/li>`).join("")}<\/ul>${(j.加分项||[]).length?`<div><b>加分：</b>${esc((j.加分项||[]).join("；"))}<\/div>`:""}${j.面试流程?`<div><b>流程：</b>${esc(j.面试流程)}<\/div>`:""}<\/details>`:"";
-  return `<div class="card s-${esc(j.投递状态)}" data-id="${esc(j.id)}">
+  return `<div class="card s-${esc(j.投递状态)}${j.hc状态==="在招"?"":" nohc"}" data-id="${esc(j.id)}">
     <div class="fit" style="color:${fitColor(j.匹配度)}">${j.匹配度==null?"—":j.匹配度}</div>
     <h3>${esc(j.公司)}</h3>
     <div class="role">${esc(j.岗位)}${j.团队?" · "+esc(j.团队):""}</div>
@@ -647,13 +659,13 @@ function coCard(g){
   const dd=g.dd<9999?js.find(j=>j.截止天数===g.dd):null;
   const top=js.slice(0,3);
   const stage=js.map(j=>j.公司阶段).find(Boolean)||"";
-  return `<div class="card co" data-co="${esc(g.name)}">
+  return `<div class="card co${g.open?"":" nohc"}" data-co="${esc(g.name)}">
     <div class="fit" style="color:${fitColor(g.fit<0?null:g.fit)}">${g.fit<0?"—":g.fit}</div>
     <h3>${esc(g.name)}</h3>
     <div class="count"><b>${js.length}</b> 个对口岗位${js.length!==all.length?`（共 ${all.length}）`:""}${campus?` · 校招 ${campus}`:""}${intern?` · 实习 ${intern}`:""}${applied?` · <span class="tag ok">已投 ${applied}</span>`:""}</div>
     <div class="tags">${dirs.map(t=>`<span class="tag">${esc(t)}<\/span>`).join("")}
       ${cities.slice(0,4).map(c=>`<span class="tag gray">${esc(c)}<\/span>`).join("")}
-      ${open<js.length?`<span class="tag gray">在招 ${open}/${js.length}<\/span>`:""}${dd?ddTag(dd):""}
+      ${!g.open?`<span class="tag bad">无在招 HC<\/span>`:open<js.length?`<span class="tag gray">在招 ${open}/${js.length}<\/span>`:""}${dd?ddTag(dd):""}
       ${pendingOf(g.name)?`<span class="tag warn" title="${esc(pendingOf(g.name))}">待补查<\/span>`:""}</div>
     ${stage?`<div class="meta"><div><b>阶段</b> ${esc(stage.length>70?stage.slice(0,70)+"…":stage)}<\/div><\/div>`:""}
     <ul class="co-roles">${top.map(j=>`<li><span>${esc(j.岗位)}<\/span><span style="color:${fitColor(j.匹配度)}">${j.匹配度??"—"}<\/span><\/li>`).join("")}<\/ul>
@@ -669,7 +681,10 @@ function apply(){
     (!city || j.城市===city) && (!hc || j.hc状态===hc) && (!st || j.投递状态===st) &&
     (!q || JSON.stringify(j).toLowerCase().includes(q)));
   const sort=fSort.value;
+  // 在招的排前面，已关闭/暂停/未知一律排到最后
+  const isOpen=j=>j.hc状态==="在招";
   const byJob=(a,b)=>{
+    if(isOpen(a)!==isOpen(b)) return isOpen(a)?-1:1;
     if(sort==="fit") return (b.匹配度??-1)-(a.匹配度??-1);
     if(sort==="pay") return (b.年包万??-1)-(a.年包万??-1);
     if(sort==="deadline") return (a.截止天数??9999)-(b.截止天数??9999);
@@ -683,11 +698,11 @@ function apply(){
     crumb.style.display="none";
     const groups=new Map();
     list.forEach(j=>{if(!groups.has(j.公司))groups.set(j.公司,[]);groups.get(j.公司).push(j);});
-    const cos=[...groups.entries()].map(([name,js])=>({name,js,
-      fit:Math.max(...js.map(j=>j.匹配度??-1)),
-      pay:Math.max(...js.map(j=>j.年包万??-1)),
-      dd:Math.min(...js.map(j=>(j.截止天数!=null&&j.截止天数>=0)?j.截止天数:9999))}));
-    cos.sort((a,b)=>sort==="fit"?b.fit-a.fit:sort==="pay"?b.pay-a.pay:sort==="deadline"?a.dd-b.dd:a.name.localeCompare(b.name,"zh"));
+    const cos=[...groups.entries()].map(([name,js])=>{const on=js.filter(isOpen), base=on.length?on:js; return {name,js,open:on.length>0,
+      fit:Math.max(...base.map(j=>j.匹配度??-1)),
+      pay:Math.max(...base.map(j=>j.年包万??-1)),
+      dd:Math.min(...base.map(j=>(j.截止天数!=null&&j.截止天数>=0)?j.截止天数:9999))};});
+    cos.sort((a,b)=>(a.open!==b.open)?(a.open?-1:1):sort==="fit"?b.fit-a.fit:sort==="pay"?b.pay-a.pay:sort==="deadline"?a.dd-b.dd:a.name.localeCompare(b.name,"zh"));
     document.getElementById("grid").innerHTML = cos.map(coCard).join("");
     document.querySelectorAll(".card.co").forEach(el=>el.addEventListener("click",()=>{
       fCo.value=el.dataset.co; apply();

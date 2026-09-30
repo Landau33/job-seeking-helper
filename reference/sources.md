@@ -180,6 +180,9 @@ Sharpa 的 `sharpa.com/pages/careers` 只列新加坡和美国的 18 个岗位�
   `"DisplayFields":["Category","Kind","LocId","Degree","YearsOfWorking","PostDate","Salary","Org"]`，否则城市为空。
 - **Moka**：`POST app.mokahr.com/api/outer/ats-apply/website/jobs/v2`（limit 最大 50），响应是 AES-128-CBC 密文，
   密钥在响应的 `necromancer` 字段里；解密后首 16 字节是乱码，丢弃即可。
+  **Moka 列表接口不返回工作地**，城市要逐岗调详情接口 `.../website/job`（带 `jobId`）才有。只看列表或只按城市筛选器
+  看一眼就下结论会漏掉多城市岗：速腾聚创 27 届校招 99 个岗里，「具身操作大模型工程师」写的是上海/深圳，
+  曾被整体判成「对口岗全在深圳」。对口岗位不多时，逐个读详情里的工作地。
 - **用友大易**（`wecruit.hotjob.cn/<租户>/pb/school.html`）、**Workday**、**SmartRecruiters** 都有公开列表接口。
 - **猎聘企业页**能看到公司全部在招岗位和城市，是官网只给邮箱或跳第三方时的兜底；连续查询十来次后会被限流，
   限流后返回空结果，**不能把空结果当成没有岗位**。
