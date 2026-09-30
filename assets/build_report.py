@@ -158,6 +158,14 @@ def validate(data: Any) -> Tuple[List[Issue], List[Issue]]:
                 if gap > 0:
                     warnings.append(Issue("warning", where,
                         f"{name}：命中 {hit} 个、筛掉 {dropped} 个，只收录了 {took} 个，还差 {gap} 个没入表。"))
+            pending = info.get("待补查")
+            if pending:
+                chans = "、".join(pending) if isinstance(pending, list) else str(pending)
+                warnings.append(Issue("warning", where,
+                    f"{name}：还有渠道没查（{chans}），数字对得上也不能算收全。"))
+            elif hit == 0 and took == 0 and not info.get("检索词"):
+                warnings.append(Issue("warning", where,
+                    f"{name}：命中 0。请确认是真的没有对口岗位，还是岗位没取到；没取到要写 待补查。"))
             actual = counted.get(name)
             if isinstance(took, int) and actual is not None and took != actual:
                 warnings.append(Issue("warning", where,
@@ -385,14 +393,15 @@ def write_xlsx(bundle: Dict[str, Any], issues: List[Issue], path: Path) -> None:
     sheet(
         "公司汇总",
         ["公司", "岗位数", "在招", "已投", "最高匹配度", "最早截止",
-         "命中", "收录", "筛掉", "未入表", "检索词", "方向", "城市"],
+         "命中", "收录", "筛掉", "未入表", "待补查", "检索词", "方向", "城市"],
         [[name, v["岗位数"], v["在招"], v["已投"], v["最高匹配"],
           v["最早截止"].isoformat() if v["最早截止"] else "",
           _cov(name, "命中"), _cov(name, "收录"), _cov(name, "筛掉"), _gap(name),
+          "、".join(_cov(name, "待补查")) if isinstance(_cov(name, "待补查"), list) else (_cov(name, "待补查") or ""),
           "、".join(_cov(name, "检索词") or []) if isinstance(_cov(name, "检索词"), list) else "",
           "、".join(sorted(v["方向"])), "、".join(sorted(v["城市"]))]
          for name, v in sorted(companies.items(), key=lambda kv: (-(kv[1]["最高匹配"] or 0), kv[0]))],
-        [24, 8, 8, 8, 12, 12, 8, 8, 8, 10, 26, 30, 16],
+        [24, 8, 8, 8, 12, 12, 8, 8, 8, 10, 24, 26, 30, 16],
     )
 
     job_cols = ["id", "公司", "岗位", "团队", "方向标签", "城市", "hc状态", "薪资", "年包万",
@@ -623,6 +632,10 @@ function card(j){
   <\/div>`;
 }
 
+function pendingOf(name){
+  const c=(COVERAGE||{})[name]; const p=c&&c.待补查;
+  return Array.isArray(p)?p.join("、"):(p||"");
+}
 function coCard(g){
   const js=g.js, all=jobs.filter(j=>j.公司===g.name);
   const dirs=uniq(js.flatMap(j=>j.方向标签||[]));
@@ -640,7 +653,8 @@ function coCard(g){
     <div class="count"><b>${js.length}</b> 个对口岗位${js.length!==all.length?`（共 ${all.length}）`:""}${campus?` · 校招 ${campus}`:""}${intern?` · 实习 ${intern}`:""}${applied?` · <span class="tag ok">已投 ${applied}</span>`:""}</div>
     <div class="tags">${dirs.map(t=>`<span class="tag">${esc(t)}<\/span>`).join("")}
       ${cities.slice(0,4).map(c=>`<span class="tag gray">${esc(c)}<\/span>`).join("")}
-      ${open<js.length?`<span class="tag gray">在招 ${open}/${js.length}<\/span>`:""}${dd?ddTag(dd):""}</div>
+      ${open<js.length?`<span class="tag gray">在招 ${open}/${js.length}<\/span>`:""}${dd?ddTag(dd):""}
+      ${pendingOf(g.name)?`<span class="tag warn" title="${esc(pendingOf(g.name))}">待补查<\/span>`:""}</div>
     ${stage?`<div class="meta"><div><b>阶段</b> ${esc(stage.length>70?stage.slice(0,70)+"…":stage)}<\/div><\/div>`:""}
     <ul class="co-roles">${top.map(j=>`<li><span>${esc(j.岗位)}<\/span><span style="color:${fitColor(j.匹配度)}">${j.匹配度??"—"}<\/span><\/li>`).join("")}<\/ul>
     <div class="co-more">${js.length>3?`查看全部 ${js.length} 个岗位 →`:"查看岗位详情 →"}</div>
@@ -714,8 +728,11 @@ function renderKpis(){
   const rows=names.map(n=>{
     const c=(COVERAGE||{})[n]||{}; const hit=c.命中, took=c.收录, drop=c.筛掉||0;
     const gap=(typeof hit==="number"&&typeof took==="number")?hit-drop-took:null;
+    const pend=pendingOf(n);
+    // 数字对得上不等于收全：还有渠道没查（待补查）时单独标出来
     const tag = gap===null ? '<span class="tag warn">无覆盖记录</span>'
               : gap>0 ? `<span class="tag bad">还差 ${gap} 个没入表</span>`
+              : pend ? `<span class="tag warn">待补查：${esc(pend)}</span>`
               : '<span class="tag ok">已收全</span>';
     return `<tr><td>${esc(n)}</td><td style="text-align:right">${counted[n]||0}</td>
       <td style="text-align:right">${hit==null?"—":hit}</td>
@@ -723,9 +740,9 @@ function renderKpis(){
       <td style="color:#64748b;font-size:12px">${esc((c.检索词||[]).join("、"))}${c.说明?" · "+esc(c.说明):""}</td></tr>`;
   }).join("");
   const bad=names.filter(n=>{const c=(COVERAGE||{})[n]; if(!c)return true;
-    const g=(typeof c.命中==="number"&&typeof c.收录==="number")?c.命中-(c.筛掉||0)-c.收录:null; return g===null||g>0;}).length;
+    const g=(typeof c.命中==="number"&&typeof c.收录==="number")?c.命中-(c.筛掉||0)-c.收录:null; return g===null||g>0||!!pendingOf(n);}).length;
   document.getElementById("coverage").innerHTML=
-    `<h2>公司覆盖度（${names.length} 家，${bad} 家有缺口或没记录）</h2>
+    `<h2>公司覆盖度（${names.length} 家，${bad} 家有缺口、待补查或没记录）</h2>
      <p style="font-size:12.5px;color:#64748b;margin:4px 0 10px">「命中」是该公司符合你方向的在招岗位总数，「表内」是实际入表条数。两者不一致说明岗位没收全，看板会低估这家公司的机会。</p>
      <div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">
      <thead><tr style="text-align:left;color:#64748b">
