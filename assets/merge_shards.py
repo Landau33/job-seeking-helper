@@ -5,7 +5,8 @@
     python3 merge_shards.py <out_dir>/agent_out <out_dir>/jobs.json [--dry-run]
 
 设计要点（对齐 phd-application-planner 的研究流水线）:
-- 稳定身份：公司+职位ID（无ID时用 公司+岗位名+城市 归一化），不依赖数组顺序或岗位名单独判重；
+- 稳定身份：公司+职位ID字段（没有时依次退到 岗位名里的编号、JD 链接的 position id、
+  公司+岗位名+城市+招聘类型 归一化），不依赖数组顺序或岗位名单独判重；
 - 用户状态不可覆盖：已存在 jobs.json 里的 投递状态/下一步/备注 会保留；
 - 失败不静默丢弃：分片里的 errors[] 汇总进 meta.研究错误，来源的 访问失败 原样保留；
 - 覆盖度合并：每家公司的 命中/收录/筛掉 汇总进 meta.公司覆盖，并按实际条数校正 收录。
@@ -31,6 +32,9 @@ def norm(text: Any) -> str:
 
 def identity(job: Dict[str, Any]) -> Tuple[str, str]:
     company = norm(job.get("公司"))
+    jid = norm(job.get("职位ID"))
+    if jid and jid not in ("未知", "无", "none", "null"):
+        return company, "jid:" + jid
     title = str(job.get("岗位") or "")
     m = JOB_ID_RE.search(title)
     if m:
@@ -39,7 +43,8 @@ def identity(job: Dict[str, Any]) -> Tuple[str, str]:
     m2 = re.search(r"/position/(\d{6,})", link)
     if m2:
         return company, "url:" + m2.group(1)
-    return company, "t:" + norm(title) + "|" + norm(job.get("城市"))
+    # 同名岗位的校招/实习/社招是不同的岗，招聘类型也要进键
+    return company, "t:" + norm(title) + "|" + norm(job.get("城市")) + "|" + norm(job.get("招聘类型"))
 
 
 def load_shards(shard_dir: Path) -> Tuple[List[Dict], Dict[str, Dict], List[Dict]]:
