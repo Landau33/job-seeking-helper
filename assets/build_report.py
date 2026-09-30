@@ -481,6 +481,16 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
 .note{margin-top:20px;background:#0f172a;color:#cbd5e1;border-radius:var(--radius);padding:16px 18px;font-size:12.5px;line-height:1.8}
 .note b{color:#fff}
 .empty{padding:40px;text-align:center;color:var(--muted)}
+.card.co{cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.card.co:hover{border-color:#c7d7ff;box-shadow:0 4px 14px rgba(31,94,255,.08)}
+.card.co .count{font-size:12.5px;color:#334155;margin:2px 0 8px}
+.card.co .count b{font-size:15px;color:var(--brand)}
+.co-roles{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px;color:#334155}
+.co-roles li{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-top:1px dashed var(--line)}
+.co-roles li span:last-child{font-weight:700;white-space:nowrap}
+.co-more{font-size:12px;color:var(--brand);font-weight:600;margin-top:8px}
+.crumb{display:none;margin-top:14px;align-items:center;gap:10px;font-size:13px}
+.crumb b{font-size:16px}
 @media(max-width:640px){.grid{grid-template-columns:1fr}.hero{padding:20px}}
 </style>
 </head>
@@ -506,6 +516,7 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
     <button id="btnExport">导出投递状态</button>
     <button id="btnReset">重置筛选</button>
   </div>
+  <div class="crumb" id="crumb"><button id="btnBack">← 返回公司列表</button><b id="crumbName"></b><span id="crumbInfo" style="color:#64748b"></span></div>
   <div class="grid" id="grid"></div>
   <div class="empty" id="empty" style="display:none">没有符合条件的岗位。</div>
   <div class="q" id="coverage"></div>
@@ -612,6 +623,30 @@ function card(j){
   <\/div>`;
 }
 
+function coCard(g){
+  const js=g.js, all=jobs.filter(j=>j.公司===g.name);
+  const dirs=uniq(js.flatMap(j=>j.方向标签||[]));
+  const cities=uniq(js.flatMap(j=>String(j.城市||"").split(/[\/、,，]/).map(s=>s.trim())));
+  const open=js.filter(j=>j.hc状态==="在招").length;
+  const applied=all.filter(j=>j.投递状态!=="未投"&&j.投递状态!=="暂缓").length;
+  const campus=js.filter(j=>/校招|27届|应届/.test((j.经验要求||"")+(j.岗位||""))).length;
+  const intern=js.filter(j=>/实习/.test((j.经验要求||"")+(j.岗位||""))).length;
+  const dd=g.dd<9999?js.find(j=>j.截止天数===g.dd):null;
+  const top=js.slice(0,3);
+  const stage=js.map(j=>j.公司阶段).find(Boolean)||"";
+  return `<div class="card co" data-co="${esc(g.name)}">
+    <div class="fit" style="color:${fitColor(g.fit<0?null:g.fit)}">${g.fit<0?"—":g.fit}</div>
+    <h3>${esc(g.name)}</h3>
+    <div class="count"><b>${js.length}</b> 个对口岗位${js.length!==all.length?`（共 ${all.length}）`:""}${campus?` · 校招 ${campus}`:""}${intern?` · 实习 ${intern}`:""}${applied?` · <span class="tag ok">已投 ${applied}</span>`:""}</div>
+    <div class="tags">${dirs.map(t=>`<span class="tag">${esc(t)}<\/span>`).join("")}
+      ${cities.slice(0,4).map(c=>`<span class="tag gray">${esc(c)}<\/span>`).join("")}
+      ${open<js.length?`<span class="tag gray">在招 ${open}/${js.length}<\/span>`:""}${dd?ddTag(dd):""}</div>
+    ${stage?`<div class="meta"><div><b>阶段</b> ${esc(stage.length>70?stage.slice(0,70)+"…":stage)}<\/div><\/div>`:""}
+    <ul class="co-roles">${top.map(j=>`<li><span>${esc(j.岗位)}<\/span><span style="color:${fitColor(j.匹配度)}">${j.匹配度??"—"}<\/span><\/li>`).join("")}<\/ul>
+    <div class="co-more">${js.length>3?`查看全部 ${js.length} 个岗位 →`:"查看岗位详情 →"}</div>
+  <\/div>`;
+}
+
 function apply(){
   const co=fCo.value, dir=fDir.value, city=fCity.value, hc=fHc.value, st=fSt.value, q=fQ.value.trim().toLowerCase();
   let list = jobs.filter(j =>
@@ -620,14 +655,37 @@ function apply(){
     (!city || j.城市===city) && (!hc || j.hc状态===hc) && (!st || j.投递状态===st) &&
     (!q || JSON.stringify(j).toLowerCase().includes(q)));
   const sort=fSort.value;
-  list.sort((a,b)=>{
+  const byJob=(a,b)=>{
     if(sort==="fit") return (b.匹配度??-1)-(a.匹配度??-1);
     if(sort==="pay") return (b.年包万??-1)-(a.年包万??-1);
     if(sort==="deadline") return (a.截止天数??9999)-(b.截止天数??9999);
     return String(a.公司).localeCompare(String(b.公司),"zh");
-  });
-  document.getElementById("grid").innerHTML = list.map(card).join("");
+  };
+  list.sort(byJob);
+  const crumb=document.getElementById("crumb");
   document.getElementById("empty").style.display = list.length?"none":"block";
+  if(!co){
+    // 主页：一家公司一张卡，点开再看岗位
+    crumb.style.display="none";
+    const groups=new Map();
+    list.forEach(j=>{if(!groups.has(j.公司))groups.set(j.公司,[]);groups.get(j.公司).push(j);});
+    const cos=[...groups.entries()].map(([name,js])=>({name,js,
+      fit:Math.max(...js.map(j=>j.匹配度??-1)),
+      pay:Math.max(...js.map(j=>j.年包万??-1)),
+      dd:Math.min(...js.map(j=>(j.截止天数!=null&&j.截止天数>=0)?j.截止天数:9999))}));
+    cos.sort((a,b)=>sort==="fit"?b.fit-a.fit:sort==="pay"?b.pay-a.pay:sort==="deadline"?a.dd-b.dd:a.name.localeCompare(b.name,"zh"));
+    document.getElementById("grid").innerHTML = cos.map(coCard).join("");
+    document.querySelectorAll(".card.co").forEach(el=>el.addEventListener("click",()=>{
+      fCo.value=el.dataset.co; apply();
+      document.querySelector(".bar").scrollIntoView({behavior:"smooth"});
+    }));
+    return;
+  }
+  const all=jobs.filter(j=>j.公司===co);
+  crumb.style.display="flex";
+  document.getElementById("crumbName").textContent=co;
+  document.getElementById("crumbInfo").textContent=`显示 ${list.length} / ${all.length} 个岗位`+((COVERAGE||{})[co]&&COVERAGE[co].说明?" · "+COVERAGE[co].说明:"");
+  document.getElementById("grid").innerHTML = list.map(card).join("");
   document.querySelectorAll(".stsel").forEach(sel=>sel.addEventListener("change",e=>{
     const id=e.target.closest(".card").dataset.id;
     local[id]=e.target.value;
@@ -691,6 +749,7 @@ document.getElementById("btnReset").addEventListener("click",()=>{
   ["fCo","fDir","fCity","fHc","fSt"].forEach(id=>document.getElementById(id).value="");
   fQ.value=""; fSort.value="fit"; apply();
 });
+document.getElementById("btnBack").addEventListener("click",()=>{fCo.value="";apply();});
 ["fCo","fDir","fCity","fHc","fSt","fSort"].forEach(id=>document.getElementById(id).addEventListener("change",apply));
 document.getElementById("fQ").addEventListener("input",apply);
 renderKpis(); apply();
