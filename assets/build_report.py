@@ -623,7 +623,7 @@ function card(j){
   const doubt = (j.存疑||[]).length?`<details><summary>存疑 ${j.存疑.length} 条</summary><ul>${j.存疑.map(d=>`<li>${esc(d)}<\/li>`).join("")}<\/ul><\/details>`:"";
   const req = (j.核心要求||[]).length?`<details><summary>岗位要求 / 面试流程</summary><ul>${(j.核心要求||[]).map(r=>`<li>${esc(r)}<\/li>`).join("")}<\/ul>${(j.加分项||[]).length?`<div><b>加分：</b>${esc((j.加分项||[]).join("；"))}<\/div>`:""}${j.面试流程?`<div><b>流程：</b>${esc(j.面试流程)}<\/div>`:""}<\/details>`:"";
   return `<div class="card s-${esc(j.投递状态)}${j.hc状态==="在招"?"":" nohc"}" data-id="${esc(j.id)}">
-    <div class="fit" style="color:${fitColor(j.匹配度)}">${j.匹配度==null?"—":j.匹配度}</div>
+    <div class="fit" style="color:${fitColor(j.匹配度)}" title="${esc(j.匹配理由||"")}">${j.匹配度==null?"—":j.匹配度}</div>
     <h3>${esc(j.公司)}</h3>
     <div class="role">${esc(j.岗位)}${j.团队?" · "+esc(j.团队):""}</div>
     <div class="tags">${(j.方向标签||[]).map(t=>`<span class="tag">${esc(t)}<\/span>`).join("")}
@@ -632,7 +632,6 @@ function card(j){
       <div><b>薪资</b> ${payText(j)} ${confTag(j)}</div>
       ${j.学历要求||j.经验要求?`<div><b>门槛</b> ${esc([j.学历要求,j.经验要求].filter(Boolean).join(" · "))}<\/div>`:""}
       ${j.公司阶段?`<div><b>阶段</b> ${esc(j.公司阶段)}<\/div>`:""}
-      ${j.匹配理由?`<div><b>匹配</b> ${esc(j.匹配理由)}<\/div>`:""}
       ${j.下一步?`<div><b>下一步</b> ${esc(j.下一步)}<\/div>`:""}
     </div>
     ${req}${doubt}
