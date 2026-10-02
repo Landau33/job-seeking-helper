@@ -41,13 +41,26 @@ python3 assets/merge_shards.py <out>/agent_out <out>/jobs.json
 
 ## 打开看板
 
-**方式一：双击文件**（最省事，不需要服务器）
+**推荐：用看板服务启动（改投递状态会自动写回 jobs.json）**
+
+```bash
+python3 <skill>/assets/serve.py <out>
+```
+
+然后浏览器打开 <http://127.0.0.1:8778/report.html>。右上角标签显示「自动同步已开启」即生效：
+在卡片上改投递状态，会立刻写回 `jobs.json`（只改 投递状态 / 下一步 / 备注，写前备份为 `jobs.json.bak`）；
+`jobs.json` 有更新时刷新页面会自动重建看板。服务只监听本机 127.0.0.1，只接受同源请求。
+按 Ctrl+C 停止；换端口加 `--port 8780`；想在后台跑：`nohup python3 <skill>/assets/serve.py <out> >/tmp/jobboard.log 2>&1 &`，
+停止用 `pkill -f "assets/serve.py"`。第一次用这种方式打开时，页面会把这个地址下浏览器里已有的、和 `jobs.json`
+不一致的状态补推一次。
+
+**方式一：双击文件**（最省事，但状态只存在浏览器里，不会写回 jobs.json）
 
 ```bash
 open <out>/report.html
 ```
 
-**方式二：本地服务器**（需要在手机/其他标签页访问，或想要稳定的地址时用）
+**方式二：普通静态服务器**（只读，同样不会写回 jobs.json；有了看板服务后一般不需要）
 
 ```bash
 cd <out> && python3 -m http.server 8778

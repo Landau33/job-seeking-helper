@@ -247,6 +247,9 @@ python3 "<skill>/assets/build_report.py" "<out>/jobs.json" --html "<out>/report.
 不把几百个岗位平铺出来；点公司卡片（或在「公司」下拉里选）进入这家公司的岗位卡片，
 岗位卡片上有来源链接、存疑标注和投递状态；投递状态可以在页面上改，存在浏览器 localStorage 里，
 点「导出状态」得到一段 JSON，可以粘回 `jobs.json`（脚本 `--merge-status status.json` 也能合并）。
+**想让看板上的改动自动写回 `jobs.json`**，用 `python3 "<skill>/assets/serve.py" "<out>"` 启动本机看板服务，
+打开 `http://127.0.0.1:8778/report.html`：改投递状态即写回 `jobs.json`（只改投递状态/下一步/备注，写前备份），
+`jobs.json` 更新后刷新页面会自动重建。双击打开文件时浏览器无权写本地文件，只能走导出 + `--merge-status`。
 
 ## 第 5 步：面试准备与投递节奏
 

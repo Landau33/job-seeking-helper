@@ -534,6 +534,7 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
       <option value="deadline">截止时间</option><option value="company">公司名</option>
     </select>
     <input type="search" id="fQ" placeholder="搜索公司 / 岗位 / 要求 / 关键词">
+    <span id="syncTag" class="tag gray" title="双击打开时状态只存在本浏览器；用 serve.py 启动后会自动写回 jobs.json">状态仅存本地</span>
     <button id="btnExport">导出投递状态</button>
     <button id="btnReset">重置筛选</button>
   </div>
@@ -717,8 +718,9 @@ function apply(){
   document.querySelectorAll(".stsel").forEach(sel=>sel.addEventListener("change",e=>{
     const id=e.target.closest(".card").dataset.id;
     local[id]=e.target.value;
-    localStorage.setItem(KEY, JSON.stringify(local));
+    try { localStorage.setItem(KEY, JSON.stringify(local)); } catch(err) {}
     const job=jobs.find(x=>x.id===id); if(job) job.投递状态=e.target.value;
+    pushStatus({[id]: e.target.value});
     renderKpis(); apply();
   }));
 }
@@ -783,6 +785,26 @@ document.getElementById("btnReset").addEventListener("click",()=>{
 document.getElementById("btnBack").addEventListener("click",()=>{fCo.value="";apply();});
 ["fCo","fDir","fCity","fHc","fSt","fSort"].forEach(id=>document.getElementById(id).addEventListener("change",apply));
 document.getElementById("fQ").addEventListener("input",apply);
+// —— 自动同步：用 serve.py 启动（http://127.0.0.1:…）时，改动会写回 jobs.json ——
+let SYNC=false;
+function setSync(text, cls){const t=document.getElementById("syncTag"); if(t){t.textContent=text; t.className="tag "+cls;}}
+async function pushStatus(upd){
+  if(!SYNC) return;
+  try{
+    const r=await fetch("/api/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(upd)});
+    const d=await r.json();
+    if(d.ok){ setSync("已同步到 jobs.json","ok"); } else { setSync("同步失败，已存本地","bad"); }
+  }catch(e){ setSync("同步失败，已存本地","bad"); }
+}
+(async function initSync(){
+  if(!/^https?:$/.test(location.protocol)) return;
+  try{ const r=await fetch("/api/ping"); SYNC=r.ok&&(await r.json()).ok; }catch(e){ SYNC=false; }
+  if(!SYNC){ return; }
+  setSync("自动同步已开启","ok");
+  // 把本浏览器里和 jobs.json 不一致的状态补推一次（例如服务没开时改过的）
+  const diff={}; DATA.jobs.forEach(j=>{ const v=local[j.id]; if(v && v!==(j.投递状态||"未投")) diff[j.id]=v; });
+  if(Object.keys(diff).length) await pushStatus(diff);
+})();
 renderKpis(); apply();
 </script>
 </body>
