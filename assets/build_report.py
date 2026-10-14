@@ -590,7 +590,17 @@ function fill(sel, values, all){sel.innerHTML = [`<option value="">${all}</optio
 
 fill(document.getElementById("fCo"), uniq(jobs.map(j=>j.公司)), "全部公司");
 fill(document.getElementById("fDir"), uniq(jobs.flatMap(j=>j.方向标签||[])), "全部方向");
-fill(document.getElementById("fCity"), uniq(jobs.map(j=>j.城市)), "全部城市");
+// 城市归一：「上海/北京」拆开、「上海嘉定」「深圳市」归到城市名；下拉只列目标城市，其余合并为「其他城市」
+const MAIN_CITIES=[].concat((DATA.meta||{}).城市||[]).filter(Boolean);
+const KNOWN=["上海","北京","深圳","杭州","苏州","南京","广州","成都","武汉","西安","合肥","东莞","长沙","济南","天津","重庆","宁波","无锡","青岛","厦门","香港"];
+function cityParts(j){
+  return [...new Set(String(j.城市||"").split(/[\/、,，;；]/).map(x=>x.trim()).filter(Boolean).map(x=>{
+    const k=KNOWN.find(c=>x.startsWith(c)); return k||(/新界|九龙/.test(x)?"香港":"海外/其他");
+  }))];
+}
+jobs.forEach(j=>{ j._cities=cityParts(j); });
+const cityOpts=(MAIN_CITIES.length?MAIN_CITIES:uniq(jobs.flatMap(j=>j._cities))).concat(["其他城市"]);
+fill(document.getElementById("fCity"), cityOpts, "全部城市");
 fill(document.getElementById("fHc"), uniq(jobs.map(j=>j.hc状态)), "全部 HC");
 fill(document.getElementById("fSt"), STATES, "全部状态");
 
@@ -651,7 +661,8 @@ function pendingOf(name){
 function coCard(g){
   const js=g.js, all=jobs.filter(j=>j.公司===g.name);
   const dirs=uniq(js.flatMap(j=>j.方向标签||[]));
-  const cities=uniq(js.flatMap(j=>String(j.城市||"").split(/[\/、,，]/).map(s=>s.trim())));
+  const allc=uniq(js.flatMap(j=>j._cities));
+  const cities=(MAIN_CITIES.length?allc.filter(c=>MAIN_CITIES.includes(c)):allc).concat(allc.some(c=>MAIN_CITIES.length&&!MAIN_CITIES.includes(c))?["+其他城市"]:[]);
   const open=js.filter(j=>j.hc状态==="在招").length;
   const applied=all.filter(j=>j.投递状态!=="未投"&&j.投递状态!=="暂缓").length;
   const campus=js.filter(j=>/校招|27届|应届/.test((j.经验要求||"")+(j.岗位||""))).length;
@@ -678,7 +689,7 @@ function apply(){
   let list = jobs.filter(j =>
     (!co || j.公司===co) &&
     (!dir || (j.方向标签||[]).includes(dir)) &&
-    (!city || j.城市===city) && (!hc || j.hc状态===hc) && (!st || j.投递状态===st) &&
+    (!city || (city==="其他城市" ? j._cities.some(c=>!MAIN_CITIES.includes(c)) : j._cities.includes(city))) && (!hc || j.hc状态===hc) && (!st || j.投递状态===st) &&
     (!q || JSON.stringify(j).toLowerCase().includes(q)));
   const sort=fSort.value;
   // 在招的排前面，已关闭/暂停/未知一律排到最后
