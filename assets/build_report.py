@@ -502,6 +502,8 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
 .note b{color:#fff}
 .empty{padding:40px;text-align:center;color:var(--muted)}
 .card.nohc{opacity:.55}
+.types{display:inline-flex;gap:8px;align-items:center;font-size:13px}
+.types label{display:inline-flex;gap:3px;align-items:center;cursor:pointer}
 .card.co{cursor:pointer;transition:border-color .15s,box-shadow .15s}
 .card.co:hover{border-color:#c7d7ff;box-shadow:0 4px 14px rgba(31,94,255,.08)}
 .card.co .count{font-size:12.5px;color:#334155;margin:2px 0 8px}
@@ -529,6 +531,7 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
     <label>城市</label><select id="fCity"></select>
     <label>HC</label><select id="fHc"></select>
     <label>状态</label><select id="fSt"></select>
+    <span class="types" id="fType" title="按招聘类型显示；岗位名带「转正实习 / Plan A」的应届项目算校招，日常实习算实习；已投的岗位始终显示"><b>类型</b><label><input type="checkbox" value="校招" checked>校招</label><label><input type="checkbox" value="社招" checked>社招</label><label><input type="checkbox" value="实习">实习</label></span>
     <label>排序</label><select id="fSort">
       <option value="fit">匹配度</option><option value="pay">年包</option>
       <option value="deadline">截止时间</option><option value="company">公司名</option>
@@ -583,6 +586,7 @@ const local = (function migrate(){
   return cur;
 })();
 const jobs = DATA.jobs.map(j => Object.assign({}, j, {投递状态: local[j.id] || j.投递状态 || "未投"}));
+window.__allJobs = jobs;
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function uniq(arr){return [...new Set(arr.filter(Boolean))].sort();}
@@ -599,6 +603,22 @@ function cityParts(j){
   }))];
 }
 jobs.forEach(j=>{ j._cities=cityParts(j); });
+// 招聘类型：实习（纯实习）/ 校招（含转正实习、留用实习、管培、TGT 等应届项目）/ 社招（其余，含未标注）
+function jobType(j){
+  const t=String(j.招聘类型||""), s=[j.岗位,j.经验要求,j.投递渠道].map(x=>String(x||"")).join(" ");
+  // 只有岗位名本身是「转正实习 / Plan A」这类应届项目才算校招；日常实习、仅写「可留用」的仍算实习
+  const conv=/转正实习|Plan ?A/i.test(String(j.岗位||"")) && !/日常实习/.test(String(j.经验要求||""));
+  if((t==="实习"||/实习|intern/i.test(s)) && !conv) return "实习";
+  if(t==="校招"||conv||/校招|校园招聘|应届|\d{2,4}届|New College|Graduate|管培|管理培训生|TGT|秋招|春招/i.test(s)) return "校招";
+  return "社招";
+}
+jobs.forEach(j=>{ j._type=jobType(j); });
+const TYPE_KEY="jobseek_types_v1";
+const typeBoxes=[...document.querySelectorAll("#fType input")];
+try{ const saved=JSON.parse(localStorage.getItem(TYPE_KEY)||"null"); if(Array.isArray(saved)) typeBoxes.forEach(b=>b.checked=saved.includes(b.value)); }catch(e){}
+function typesOn(){ return typeBoxes.filter(b=>b.checked).map(b=>b.value); }
+// 已投/在流程中的岗位不受类型开关影响，避免把进度藏起来
+function typeVisible(j){ return typesOn().includes(j._type) || (j.投递状态 && j.投递状态!=="未投"); }
 const cityOpts=(MAIN_CITIES.length?MAIN_CITIES:uniq(jobs.flatMap(j=>j._cities))).concat(["其他城市"]);
 fill(document.getElementById("fCity"), cityOpts, "全部城市");
 fill(document.getElementById("fHc"), uniq(jobs.map(j=>j.hc状态)), "全部 HC");
@@ -638,7 +658,7 @@ function card(j){
     <h3>${esc(j.公司)}</h3>
     <div class="role">${esc(j.岗位)}${j.团队?" · "+esc(j.团队):""}</div>
     <div class="tags">${(j.方向标签||[]).map(t=>`<span class="tag">${esc(t)}<\/span>`).join("")}
-      <span class="tag gray">${esc(j.城市)}</span>${hcTag(j)}${ddTag(j)}</div>
+      <span class="tag gray">${esc(j.城市)}</span><span class="tag ${j._type==="实习"?"warn":"gray"}">${esc(j._type)}</span>${hcTag(j)}${ddTag(j)}</div>
     <div class="meta">
       <div><b>薪资</b> ${payText(j)} ${confTag(j)}</div>
       ${j.学历要求||j.经验要求?`<div><b>门槛</b> ${esc([j.学历要求,j.经验要求].filter(Boolean).join(" · "))}<\/div>`:""}
@@ -659,14 +679,14 @@ function pendingOf(name){
   return Array.isArray(p)?p.join("、"):(p||"");
 }
 function coCard(g){
-  const js=g.js, all=jobs.filter(j=>j.公司===g.name);
+  const js=g.js, all=jobs.filter(j=>j.公司===g.name&&typeVisible(j));
   const dirs=uniq(js.flatMap(j=>j.方向标签||[]));
   const allc=uniq(js.flatMap(j=>j._cities));
   const cities=(MAIN_CITIES.length?allc.filter(c=>MAIN_CITIES.includes(c)):allc).concat(allc.some(c=>MAIN_CITIES.length&&!MAIN_CITIES.includes(c))?["+其他城市"]:[]);
   const open=js.filter(j=>j.hc状态==="在招").length;
   const applied=all.filter(j=>j.投递状态!=="未投"&&j.投递状态!=="暂缓").length;
-  const campus=js.filter(j=>/校招|27届|应届/.test((j.经验要求||"")+(j.岗位||""))).length;
-  const intern=js.filter(j=>/实习/.test((j.经验要求||"")+(j.岗位||""))).length;
+  const campus=js.filter(j=>j._type==="校招").length;
+  const intern=js.filter(j=>j._type==="实习").length;
   const dd=g.dd<9999?js.find(j=>j.截止天数===g.dd):null;
   const top=js.slice(0,3);
   const stage=js.map(j=>j.公司阶段).find(Boolean)||"";
@@ -687,6 +707,7 @@ function coCard(g){
 function apply(){
   const co=fCo.value, dir=fDir.value, city=fCity.value, hc=fHc.value, st=fSt.value, q=fQ.value.trim().toLowerCase();
   let list = jobs.filter(j =>
+    typeVisible(j) &&
     (!co || j.公司===co) &&
     (!dir || (j.方向标签||[]).includes(dir)) &&
     (!city || (city==="其他城市" ? j._cities.some(c=>!MAIN_CITIES.includes(c)) : j._cities.includes(city))) && (!hc || j.hc状态===hc) && (!st || j.投递状态===st) &&
@@ -721,7 +742,7 @@ function apply(){
     }));
     return;
   }
-  const all=jobs.filter(j=>j.公司===co);
+  const all=jobs.filter(j=>j.公司===co&&typeVisible(j));
   crumb.style.display="flex";
   document.getElementById("crumbName").textContent=co;
   document.getElementById("crumbInfo").textContent=`显示 ${list.length} / ${all.length} 个岗位`+((COVERAGE||{})[co]&&COVERAGE[co].说明?" · "+COVERAGE[co].说明:"");
@@ -737,6 +758,7 @@ function apply(){
 }
 
 function renderKpis(){
+  const jobs=window.__allJobs.filter(typeVisible);
   const n=jobs.length, open=jobs.filter(j=>j.hc状态==="在招").length;
   const applied=jobs.filter(j=>j.投递状态!=="未投"&&j.投递状态!=="暂缓").length;
   const inflow=jobs.filter(j=>["笔试","一面","二面","三面","HR面","Offer"].includes(j.投递状态)).length;
@@ -791,11 +813,13 @@ document.getElementById("btnExport").addEventListener("click",()=>{
 });
 document.getElementById("btnReset").addEventListener("click",()=>{
   ["fCo","fDir","fCity","fHc","fSt"].forEach(id=>document.getElementById(id).value="");
-  fQ.value=""; fSort.value="fit"; apply();
+  typeBoxes.forEach(b=>b.checked=b.value!=="实习"); try{localStorage.removeItem(TYPE_KEY);}catch(e){}
+  fQ.value=""; fSort.value="fit"; renderKpis(); apply();
 });
 document.getElementById("btnBack").addEventListener("click",()=>{fCo.value="";apply();});
 ["fCo","fDir","fCity","fHc","fSt","fSort"].forEach(id=>document.getElementById(id).addEventListener("change",apply));
 document.getElementById("fQ").addEventListener("input",apply);
+typeBoxes.forEach(b=>b.addEventListener("change",()=>{ try{localStorage.setItem(TYPE_KEY,JSON.stringify(typesOn()));}catch(e){} renderKpis(); apply(); }));
 // —— 自动同步：用 serve.py 启动（http://127.0.0.1:…）时，改动会写回 jobs.json ——
 let SYNC=false;
 function setSync(text, cls){const t=document.getElementById("syncTag"); if(t){t.textContent=text; t.className="tag "+cls;}}
