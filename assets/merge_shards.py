@@ -47,6 +47,68 @@ def identity(job: Dict[str, Any]) -> Tuple[str, str]:
     return company, "t:" + norm(title) + "|" + norm(job.get("城市")) + "|" + norm(job.get("招聘类型"))
 
 
+CHANNEL_MARK = re.compile(
+    r"[（(【\[]\s*(校招|社招|校园招聘|社会招聘|(20)?\d{2}届?(校招|校园招聘)?|应届生?|全职)\s*[）)】\]]")
+
+
+def channel_of(job: Dict[str, Any]) -> str:
+    """岗位渠道：实习 / 校招 / 社招 / 校招/社招（已合并）。"""
+    title, t = str(job.get("岗位") or ""), str(job.get("招聘类型") or "")
+    if "实习" in title and not re.search(r"实习\s*[/／]\s*校招|校招\s*[/／]\s*实习|[/／]\s*实习生", title):
+        return "实习"
+    if t in ("校招", "社招", "实习", "校招/社招"):
+        return t
+    if re.search(r"校招|校园招聘|应届|\d{2,4}届", title + str(job.get("经验要求") or "")):
+        return "校招"
+    return "社招"
+
+
+def channel_key(job: Dict[str, Any]) -> Tuple[str, str, str]:
+    title = CHANNEL_MARK.sub("", str(job.get("岗位") or ""))
+    title = re.sub(r"^(20)?\d{2}届?校招[-－ ]?", "", title)
+    return norm(job.get("公司")), norm(title), norm(job.get("城市"))
+
+
+def combine_channels(jobs: List[Dict[str, Any]]) -> int:
+    """同公司、同岗位名、同城市的校招版和社招版合成一条：招聘类型记「校招/社招」，
+    社招入口放进「其他投递链接」，社招版的职位ID记进「合并职位ID」（下次刷新据此认出，不再重复新增）。
+    投递状态取已投的那一版，下一步/备注合并。返回合并掉的条数。"""
+    groups: Dict[Tuple[str, str, str], List[Dict]] = {}
+    for job in jobs:
+        groups.setdefault(channel_key(job), []).append(job)
+    drop = set()
+    for group in groups.values():
+        camp = [j for j in group if channel_of(j) in ("校招", "校招/社招")]
+        soc = [j for j in group if channel_of(j) == "社招"]
+        if not camp or not soc:
+            continue
+        main = camp[0]
+        for s in soc:
+            links = main.setdefault("其他投递链接", [])
+            if s.get("jd链接") and all(l.get("链接") != s["jd链接"] for l in links):
+                links.append({"类型": "社招", "链接": s["jd链接"], "职位ID": s.get("职位ID") or ""})
+            alias = main.setdefault("合并职位ID", [])
+            for x in (s.get("职位ID"), s.get("id")):
+                if x and x not in alias:
+                    alias.append(x)
+            have = {src.get("链接") for src in main.get("来源") or []}
+            main.setdefault("来源", []).extend(src for src in (s.get("来源") or []) if src.get("链接") not in have)
+            if (main.get("投递状态") in (None, "", "未投")) and s.get("投递状态") not in (None, "", "未投"):
+                main["投递状态"] = s["投递状态"]
+            for f in ("下一步", "备注"):
+                if s.get(f) and s[f] not in (main.get(f) or ""):
+                    main[f] = ((main.get(f) or "") + " ｜社招版：" + s[f]).strip(" ｜")
+            if s.get("hc状态") == "在招":
+                main["hc状态"] = "在招"
+            note = f"同岗也挂在社招入口（{s.get('岗位')}），已合并为一条，社招链接见「其他投递链接」"
+            if note not in (main.get("存疑") or []):
+                main.setdefault("存疑", []).append(note)
+            drop.add(id(s))
+        main["招聘类型"] = "校招/社招"
+    jobs[:] = [j for j in jobs if id(j) not in drop]
+    return len(drop)
+
+
 def load_shards(shard_dir: Path) -> Tuple[List[Dict], Dict[str, Dict], List[Dict]]:
     jobs: List[Dict] = []
     coverage: Dict[str, Dict] = {}
@@ -79,6 +141,15 @@ def merge(shard_dir: Path, target: Path, dry_run: bool = False) -> int:
         base = json.loads(target.read_text(encoding="utf-8"))
     old_jobs = base.get("jobs") or []
     old_by_key = {identity(j): j for j in old_jobs}
+    # 已合并进「校招/社招」记录的社招版，用它的职位ID也能认出来，避免刷新时又加回一条
+    alias_keys = set()
+    for j in old_jobs:
+        for link in j.get("其他投递链接") or []:
+            k = identity({"公司": j.get("公司"), "职位ID": link.get("职位ID"), "jd链接": link.get("链接"),
+                          "岗位": "", "城市": j.get("城市")})
+            if not k[1].startswith("t:"):
+                alias_keys.add(k)
+                old_by_key.setdefault(k, j)
 
     new_jobs, coverage, errors = load_shards(shard_dir)
     if not new_jobs and not coverage:
@@ -95,6 +166,8 @@ def merge(shard_dir: Path, target: Path, dry_run: bool = False) -> int:
             continue
         seen_new[key] = job
         old = old_by_key.get(key)
+        if key in alias_keys:
+            continue  # 社招版已并入「校招/社招」记录，不覆盖主记录、也不重复新增
         if old is None:
             merged.append(job)
             added += 1
@@ -105,6 +178,10 @@ def merge(shard_dir: Path, target: Path, dry_run: bool = False) -> int:
             job["id"] = old.get("id", job.get("id"))
             merged[merged.index(old)] = job
             updated += 1
+
+    combined = combine_channels(merged)
+    if combined:
+        print(f"同名校招/社招合并 {combined} 条（招聘类型记为「校招/社招」）")
 
     counts: Dict[str, int] = {}
     for job in merged:

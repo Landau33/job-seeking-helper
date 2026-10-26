@@ -495,6 +495,22 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
 .foot-row a{color:var(--brand);text-decoration:none;font-size:12px;font-weight:600}
 .q{margin-top:22px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
 .q h2{margin:0 0 8px;font-size:16px}
+details.q>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}
+details.q>summary::-webkit-details-marker{display:none}
+details.q>summary h2{margin:0;display:inline}
+details.q>summary::before{content:"▸";color:var(--muted);font-size:13px;transition:transform .15s}
+details.q[open]>summary::before{transform:rotate(90deg)}
+details.q[open]>summary{margin-bottom:10px}
+.prog{border-collapse:collapse;width:100%;font-size:13px}
+.prog th{text-align:left;color:#64748b;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.prog td{padding:6px 8px;border-bottom:1px dashed var(--line);vertical-align:top}
+.prog td.co{font-weight:600;cursor:pointer;color:var(--brand);min-width:90px}
+.prog select.st-pill{border:none;padding:2px 6px}
+.prog select{font-size:12px}
+.st-pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap}
+.st-已投{background:#eef2ff;color:#3730a3}.st-笔试{background:#fef3c7;color:#92400e}
+.st-一面,.st-二面,.st-三面,.st-HR面{background:#dbeafe;color:#1d4ed8}.st-Offer{background:#dcfce7;color:#166534}
+.st-挂{background:#fee2e2;color:#991b1b}.st-暂缓{background:#f1f5f9;color:#475569}
 .q li{font-size:12.5px;color:#334155}
 .lv-error{color:var(--danger);font-weight:700}
 .lv-warning{color:var(--warn);font-weight:700}
@@ -544,8 +560,9 @@ button:hover{background:#eef3ff;border-color:#c7d7ff}
   <div class="crumb" id="crumb"><button id="btnBack">← 返回公司列表</button><b id="crumbName"></b><span id="crumbInfo" style="color:#64748b"></span></div>
   <div class="grid" id="grid"></div>
   <div class="empty" id="empty" style="display:none">没有符合条件的岗位。</div>
-  <div class="q" id="coverage"></div>
-  <div class="q" id="quality"></div>
+  <details class="q" id="progress" open></details>
+  <details class="q" id="coverage"></details>
+  <details class="q" id="quality"></details>
   <div class="note">
     <b>怎么用</b>：投递状态可以直接在卡片上改，保存在本浏览器（同一个地址栏地址下才读得到，file:// 和 127.0.0.1 是两套）；点「导出投递状态」拿到一段 JSON，
     交给 Claude 或用 <code>build_report.py jobs.json --merge-status status.json</code> 合并回 jobs.json。<br>
@@ -605,20 +622,26 @@ function cityParts(j){
 jobs.forEach(j=>{ j._cities=cityParts(j); });
 // 招聘类型：实习（纯实习）/ 校招（含转正实习、留用实习、管培、TGT 等应届项目）/ 社招（其余，含未标注）
 function jobType(j){
-  const t=String(j.招聘类型||""), s=[j.岗位,j.经验要求,j.投递渠道].map(x=>String(x||"")).join(" ");
-  // 只有岗位名本身是「转正实习 / Plan A」这类应届项目才算校招；日常实习、仅写「可留用」的仍算实习
-  const conv=/转正实习|Plan ?A/i.test(String(j.岗位||"")) && !/日常实习/.test(String(j.经验要求||""));
-  if((t==="实习"||/实习|intern/i.test(s)) && !conv) return "实习";
-  if(t==="校招"||conv||/校招|校园招聘|应届|\d{2,4}届|New College|Graduate|管培|管理培训生|TGT|秋招|春招/i.test(s)) return "校招";
+  // 先看岗位名，再看「招聘类型」字段，最后才看经验要求：经验要求里常有「需实习经验」「是否收27届需问HR」这类字样，不能拿来判类型
+  const title=String(j.岗位||""), t=String(j.招聘类型||""), exp=String(j.经验要求||"");
+  const conv=/转正实习|Plan ?A/i.test(title) && !/日常实习/.test(exp);
+  const mixed=/实习\s*[\/／、]\s*校招|校招\s*[\/／、]\s*实习|[\/／]\s*实习生/.test(title);
+  if(/实习|intern/i.test(title) && !mixed && !conv) return "实习";
+  if(conv || mixed) return "校招";
+  if(/校招|校园招聘|应届|\d{2,4}届|New College|Graduate|管培|管理培训生|TGT|秋招|春招/i.test(title)) return "校招";
+  if(t==="校招/社招") return "校招";
+  if(t==="校招"||t==="社招"||t==="实习") return t;
+  if(/^\s*(日常)?实习/.test(exp)) return "实习";
+  if(/校招|应届|\d{2,4}届/.test(exp) && !/社招|是否收/.test(exp)) return "校招";
   return "社招";
 }
-jobs.forEach(j=>{ j._type=jobType(j); });
+jobs.forEach(j=>{ j._type=jobType(j); j._types=String(j.招聘类型||"")==="校招/社招"?["校招","社招"]:[j._type]; });
 const TYPE_KEY="jobseek_types_v1";
 const typeBoxes=[...document.querySelectorAll("#fType input")];
 try{ const saved=JSON.parse(localStorage.getItem(TYPE_KEY)||"null"); if(Array.isArray(saved)) typeBoxes.forEach(b=>b.checked=saved.includes(b.value)); }catch(e){}
 function typesOn(){ return typeBoxes.filter(b=>b.checked).map(b=>b.value); }
 // 已投/在流程中的岗位不受类型开关影响，避免把进度藏起来
-function typeVisible(j){ return typesOn().includes(j._type) || (j.投递状态 && j.投递状态!=="未投"); }
+function typeVisible(j){ return j._types.some(t=>typesOn().includes(t)) || (j.投递状态 && j.投递状态!=="未投"); }
 const cityOpts=(MAIN_CITIES.length?MAIN_CITIES:uniq(jobs.flatMap(j=>j._cities))).concat(["其他城市"]);
 fill(document.getElementById("fCity"), cityOpts, "全部城市");
 fill(document.getElementById("fHc"), uniq(jobs.map(j=>j.hc状态)), "全部 HC");
@@ -658,7 +681,7 @@ function card(j){
     <h3>${esc(j.公司)}</h3>
     <div class="role">${esc(j.岗位)}${j.团队?" · "+esc(j.团队):""}</div>
     <div class="tags">${(j.方向标签||[]).map(t=>`<span class="tag">${esc(t)}<\/span>`).join("")}
-      <span class="tag gray">${esc(j.城市)}</span><span class="tag ${j._type==="实习"?"warn":"gray"}">${esc(j._type)}</span>${hcTag(j)}${ddTag(j)}</div>
+      <span class="tag gray">${esc(j.城市)}</span><span class="tag ${j._type==="实习"?"warn":"gray"}">${esc(j._types.join("+"))}</span>${hcTag(j)}${ddTag(j)}</div>
     <div class="meta">
       <div><b>薪资</b> ${payText(j)} ${confTag(j)}</div>
       ${j.学历要求||j.经验要求?`<div><b>门槛</b> ${esc([j.学历要求,j.经验要求].filter(Boolean).join(" · "))}<\/div>`:""}
@@ -668,7 +691,7 @@ function card(j){
     ${req}${doubt}
     <div class="foot-row">
       <select class="stsel">${STATES.map(s=>`<option ${s===j.投递状态?"selected":""}>${s}<\/option>`).join("")}<\/select>
-      ${j.jd链接?`<a href="${esc(j.jd链接)}" target="_blank" rel="noopener">JD ↗<\/a>`:""}
+      ${j.jd链接?`<a href="${esc(j.jd链接)}" target="_blank" rel="noopener">${j._types.length>1?"校招 JD ↗":"JD ↗"}<\/a>`:""}${(j.其他投递链接||[]).map(l=>l.链接?` <a href="${esc(l.链接)}" target="_blank" rel="noopener">${esc(l.类型||"另一入口")} JD ↗<\/a>`:"").join("")}
       ${src?`<span style="font-size:11.5px;color:#94a3b8">来源：${src}<\/span>`:'<span class="tag warn">无来源<\/span>'}
     <\/div>
   <\/div>`;
@@ -685,7 +708,7 @@ function coCard(g){
   const cities=(MAIN_CITIES.length?allc.filter(c=>MAIN_CITIES.includes(c)):allc).concat(allc.some(c=>MAIN_CITIES.length&&!MAIN_CITIES.includes(c))?["+其他城市"]:[]);
   const open=js.filter(j=>j.hc状态==="在招").length;
   const applied=all.filter(j=>j.投递状态!=="未投"&&j.投递状态!=="暂缓").length;
-  const campus=js.filter(j=>j._type==="校招").length;
+  const campus=js.filter(j=>j._types.includes("校招")).length;
   const intern=js.filter(j=>j._type==="实习").length;
   const dd=g.dd<9999?js.find(j=>j.截止天数===g.dd):null;
   const top=js.slice(0,3);
@@ -748,13 +771,39 @@ function apply(){
   document.getElementById("crumbInfo").textContent=`显示 ${list.length} / ${all.length} 个岗位`+((COVERAGE||{})[co]&&COVERAGE[co].说明?" · "+COVERAGE[co].说明:"");
   document.getElementById("grid").innerHTML = list.map(card).join("");
   document.querySelectorAll(".stsel").forEach(sel=>sel.addEventListener("change",e=>{
-    const id=e.target.closest(".card").dataset.id;
-    local[id]=e.target.value;
-    try { localStorage.setItem(KEY, JSON.stringify(local)); } catch(err) {}
-    const job=jobs.find(x=>x.id===id); if(job) job.投递状态=e.target.value;
-    pushStatus({[id]: e.target.value});
-    renderKpis(); apply();
+    setStatus(e.target.closest(".card").dataset.id, e.target.value);
   }));
+}
+
+function setStatus(id, v){
+  local[id]=v;
+  try { localStorage.setItem(KEY, JSON.stringify(local)); } catch(err) {}
+  const job=jobs.find(x=>x.id===id); if(job) job.投递状态=v;
+  pushStatus({[id]: v});
+  renderKpis(); renderProgress(); apply();
+}
+
+// 投递进度：所有投过的岗位一张表（不受上面的筛选和类型开关影响），按流程阶段排序
+const STAGE_ORDER=["Offer","HR面","三面","二面","一面","笔试","已投","暂缓","挂"];
+function renderProgress(){
+  const el=document.getElementById("progress");
+  const list=jobs.filter(j=>j.投递状态 && j.投递状态!=="未投")
+    .sort((a,b)=>(STAGE_ORDER.indexOf(a.投递状态)-STAGE_ORDER.indexOf(b.投递状态))||String(a.公司).localeCompare(String(b.公司),"zh"));
+  const cnt={}; list.forEach(j=>{cnt[j.投递状态]=(cnt[j.投递状态]||0)+1;});
+  const sum=STAGE_ORDER.filter(s=>cnt[s]).map(s=>`<span class="st-pill st-${esc(s)}">${esc(s)} ${cnt[s]}<\/span>`).join(" ");
+  const rows=list.map(j=>`<tr data-id="${esc(j.id)}">
+      <td class="co" title="查看这家公司的全部岗位">${esc(j.公司)}<\/td>
+      <td>${esc(j.岗位)}${j.hc状态!=="在招"?` <span class="tag ${j.hc状态==="已关闭"?"bad":"gray"}">HC ${esc(j.hc状态||"未知")}<\/span>`:""}<\/td>
+      <td style="white-space:nowrap" title="${esc(j.城市||"")}">${esc(j._cities.length>3?j._cities.slice(0,3).join("/")+` 等${j._cities.length}城`:(j.城市||""))}<\/td>
+      <td style="white-space:nowrap">${esc((j._types||[j._type]).join("+"))}<\/td>
+      <td><select class="pgsel st-pill st-${esc(j.投递状态)}">${STATES.map(s=>`<option ${s===j.投递状态?"selected":""}>${s}<\/option>`).join("")}<\/select><\/td>
+      <td style="color:#475569;font-size:12px;max-width:360px" title="${esc([j.下一步,j.备注].filter(Boolean).join(" ｜ "))}">${(t=>esc(t.length>60?t.slice(0,60)+"…":t))([j.下一步,j.备注].filter(Boolean).join(" ｜ "))}<\/td>
+      <td>${j.jd链接?`<a href="${esc(j.jd链接)}" target="_blank" rel="noopener">JD ↗<\/a>`:""}<\/td><\/tr>`).join("");
+  el.innerHTML=`<summary><h2>投递进度（${list.length} 个岗位，${new Set(list.map(j=>j.公司)).size} 家公司）<\/h2>${sum}<\/summary>`+
+    (list.length?`<div style="overflow-x:auto"><table class="prog"><thead><tr><th>公司<\/th><th>职位<\/th><th>城市<\/th><th>类型<\/th><th>状态<\/th><th>下一步 / 备注<\/th><th><\/th><\/tr><\/thead><tbody>${rows}<\/tbody><\/table><\/div>`
+      :`<p style="color:#64748b;font-size:13px">还没有投递记录。在岗位卡片上把状态改成「已投」后会出现在这里。<\/p>`);
+  el.querySelectorAll(".pgsel").forEach(sel=>sel.addEventListener("change",e=>setStatus(e.target.closest("tr").dataset.id,e.target.value)));
+  el.querySelectorAll("td.co").forEach(td=>td.addEventListener("click",()=>{fCo.value=td.textContent; apply(); document.querySelector(".bar").scrollIntoView({behavior:"smooth"});}));
 }
 
 function renderKpis(){
@@ -791,7 +840,7 @@ function renderKpis(){
   const bad=names.filter(n=>{const c=(COVERAGE||{})[n]; if(!c)return true;
     const g=(typeof c.命中==="number"&&typeof c.收录==="number")?c.命中-(c.筛掉||0)-c.收录:null; return g===null||g>0||!!pendingOf(n);}).length;
   document.getElementById("coverage").innerHTML=
-    `<h2>公司覆盖度（${names.length} 家，${bad} 家有缺口、待补查或没记录）</h2>
+    `<summary><h2>公司覆盖度（${names.length} 家，${bad} 家有缺口、待补查或没记录）</h2></summary>
      <p style="font-size:12.5px;color:#64748b;margin:4px 0 10px">「命中」是该公司符合你方向的在招岗位总数，「表内」是实际入表条数。两者不一致说明岗位没收全，看板会低估这家公司的机会。</p>
      <div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">
      <thead><tr style="text-align:left;color:#64748b">
@@ -800,7 +849,7 @@ function renderKpis(){
 })();
 
 document.getElementById("quality").innerHTML =
-  `<h2>数据质量（${ISSUES.length} 条）</h2>` + (ISSUES.length
+  `<summary><h2>数据质量（${ISSUES.length} 条）</h2></summary>` + (ISSUES.length
     ? `<ul>${ISSUES.map(i=>`<li><span class="lv-${i.level}">${i.level==="error"?"错误":"提示"}<\/span> · ${esc(i.where)} — ${esc(i.message)}<\/li>`).join("")}<\/ul>`
     : "<p>校验没有发现问题。注意：校验只检查结构与来源标注，不能证明页面内容为真。<\/p>");
 
@@ -840,7 +889,12 @@ async function pushStatus(upd){
   const diff={}; DATA.jobs.forEach(j=>{ const v=local[j.id]; if(v && v!==(j.投递状态||"未投")) diff[j.id]=v; });
   if(Object.keys(diff).length) await pushStatus(diff);
 })();
-renderKpis(); apply();
+renderKpis(); renderProgress(); apply();
+["progress","coverage","quality"].forEach(id=>{
+  const el=document.getElementById(id), k="jobseek_open_"+id;
+  try{ const v=localStorage.getItem(k); if(v!==null) el.open=(v==="1"); }catch(e){}
+  el.addEventListener("toggle",()=>{ try{ localStorage.setItem(k, el.open?"1":"0"); }catch(e){} });
+});
 </script>
 </body>
 </html>
